@@ -82,7 +82,7 @@ Los servicios compartidos (Consul, Kafka, MinIO) se levantan **una sola vez** de
 
 ```bash
 # 1. Levantar infraestructura compartida (una vez)
-cd tyse-infrastructure
+cd tyse-scrutiny-infrastructure
 docker compose up -d
 
 # 2. Levantar PostgreSQL de cada microservicio

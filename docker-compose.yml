@@ -95,6 +95,9 @@ services:
       mc mb --ignore-existing tyse/e14-pdfs
       mc mb --ignore-existing tyse/e14-processed
 
+      echo 'Setting anonymous download policy for e14-pdfs...'
+      mc anonymous set download tyse/e14-pdfs
+
       echo 'MinIO buckets created successfully.'
       "
     labels:
