@@ -1,0 +1,396 @@
+# Tyse Scrutiny - Development Server Environment
+#
+# Despliega TODO el ecosistema en Docker (servidor 192.168.0.58)
+# Incluye: infraestructura + bases de datos + microservicios + nginx
+#
+# Uso:
+#   cd /home/tyse/tyse-scrutiny
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Requiere: .env.dev (copiar de .env.dev.example)
+
+name: tyse-dev
+
+services:
+  # ===========================================================================
+  # INFRAESTRUCTURA
+  # ===========================================================================
+
+  consul:
+    image: hashicorp/consul:1.21.0
+    container_name: tyse-consul-dev
+    ports:
+      - '${CONSUL_PORT:-8510}:8500'
+    command: consul agent -dev -ui -client 0.0.0.0 -log-level=INFO
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'consul', 'members']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  consul-config-loader:
+    image: jhipster/consul-config-loader:v0.4.1
+    container_name: tyse-consul-config-dev
+    volumes:
+      - ../consul/central-server-config:/config
+    environment:
+      - INIT_SLEEP_SECONDS=5
+      - CONSUL_URL=consul
+      - CONSUL_PORT=8500
+    depends_on:
+      consul:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: tyse-kafka-dev
+    ports:
+      - '${KAFKA_PORT:-9102}:9092'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server=localhost:9092']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  minio:
+    image: minio/minio:latest
+    container_name: tyse-minio-dev
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_UI_PORT:-9001}:9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tyseadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-tyseadmin123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: tyse-minio-init-dev
+    depends_on:
+      - minio
+    entrypoint: ['/bin/sh', '-c']
+    command: |
+      "
+      sleep 5
+      mc alias set tyse http://minio:9000 $${MINIO_ROOT_USER:-tyseadmin} $${MINIO_ROOT_PASSWORD:-tyseadmin123}
+      mc mb --ignore-existing tyse/e14-pdfs
+      mc mb --ignore-existing tyse/e14-processed
+      mc anonymous set download tyse/e14-pdfs
+      echo 'MinIO buckets ready.'
+      "
+    networks:
+      - tyse-dev
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: tyse-mailhog-dev
+    ports:
+      - '${MAILHOG_SMTP_PORT:-1035}:1025'
+      - '${MAILHOG_UI_PORT:-8035}:8025'
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8025']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # BASES DE DATOS
+  # ===========================================================================
+
+  postgres-gateway:
+    image: postgres:17.4
+    container_name: tyse-pg-gateway-dev
+    environment:
+      POSTGRES_DB: ${GATEWAY_DB_NAME:-tysescrutinygateway}
+      POSTGRES_USER: ${GATEWAY_DB_USER:-tysescrutinygateway}
+      POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
+    volumes:
+      - gateway_db:/var/lib/postgresql/data
+      - ../backup/gateway:/backup
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - '${GATEWAY_DB_PORT:-5432}:5432'
+
+  postgres-divipol:
+    image: postgres:17.4
+    container_name: tyse-pg-divipol-dev
+    environment:
+      POSTGRES_DB: ${DIVIPOL_DB_NAME:-tysescrutinymicrodivipol}
+      POSTGRES_USER: ${DIVIPOL_DB_USER:-tysescrutinymicrodivipol}
+      POSTGRES_PASSWORD: ${DIVIPOL_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
+    volumes:
+      - divipol_db:/var/lib/postgresql/data
+      - ../backup/divipol:/backup
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - '${DIVIPOL_DB_PORT:-5433}:5432'
+
+  postgres-scrutiny:
+    image: postgres:17.4
+    container_name: tyse-pg-scrutiny-dev
+    environment:
+      POSTGRES_DB: ${SCRUTINY_DB_NAME:-tyseScrutinyMicroScrutiny}
+      POSTGRES_USER: ${SCRUTINY_DB_USER:-tyseScrutinyMicroScrutiny}
+      POSTGRES_PASSWORD: ${SCRUTINY_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
+    volumes:
+      - scrutiny_db:/var/lib/postgresql/data
+      - ../backup/scrutiny:/backup
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - '${SCRUTINY_DB_PORT:-5434}:5432'
+
+  # ===========================================================================
+  # MICROSERVICIOS
+  # ===========================================================================
+
+  gateway:
+    image: ${REGISTRY:-ghcr.io}/${GATEWAY_IMAGE:-manuelmottaherrera/tyse-scrutiny-gateway}:${IMAGE_TAG:-develop}
+    container_name: tyse-gateway-dev
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod,api-docs
+      - JHIPSTER_SLEEP=30
+      - SPRING_R2DBC_URL=r2dbc:postgresql://postgres-gateway:5432/${GATEWAY_DB_NAME:-tysescrutinygateway}
+      - SPRING_R2DBC_USERNAME=${GATEWAY_DB_USER:-tysescrutinygateway}
+      - SPRING_R2DBC_PASSWORD=${GATEWAY_DB_PASSWORD}
+      - SPRING_LIQUIBASE_URL=jdbc:postgresql://postgres-gateway:5432/${GATEWAY_DB_NAME:-tysescrutinygateway}
+      - SPRING_LIQUIBASE_USER=${GATEWAY_DB_USER:-tysescrutinygateway}
+      - SPRING_LIQUIBASE_PASSWORD=${GATEWAY_DB_PASSWORD}
+      - SPRING_CLOUD_CONSUL_HOST=consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=kafka:9092
+      - JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET=${JWT_SECRET}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_TYSE_SCRUTINY=DEBUG
+      - JHIPSTER_CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+      - GOOGLE_RECAPTCHA_SITE_KEY=${GOOGLE_RECAPTCHA_SITE_KEY:-}
+      - GOOGLE_RECAPTCHA_SECRET_KEY=${GOOGLE_RECAPTCHA_SECRET_KEY:-}
+      - SPRING_MAIL_HOST=mailhog
+      - SPRING_MAIL_PORT=1025
+      - SPRING_MAIL_USERNAME=
+      - SPRING_MAIL_PASSWORD=
+      - SPRING_MAIL_PROTOCOL=smtp
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=false
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=false
+    depends_on:
+      postgres-gateway:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mailhog:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/management/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  divipol:
+    image: ${REGISTRY:-ghcr.io}/${DIVIPOL_IMAGE:-manuelmottaherrera/tyse-scrutiny-micro-divipol}:${IMAGE_TAG:-develop}
+    container_name: tyse-divipol-dev
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod,api-docs
+      - JHIPSTER_SLEEP=30
+      - SPRING_R2DBC_URL=r2dbc:postgresql://postgres-divipol:5432/${DIVIPOL_DB_NAME:-tysescrutinymicrodivipol}
+      - SPRING_R2DBC_USERNAME=${DIVIPOL_DB_USER:-tysescrutinymicrodivipol}
+      - SPRING_R2DBC_PASSWORD=${DIVIPOL_DB_PASSWORD}
+      - SPRING_LIQUIBASE_URL=jdbc:postgresql://postgres-divipol:5432/${DIVIPOL_DB_NAME:-tysescrutinymicrodivipol}
+      - SPRING_LIQUIBASE_USER=${DIVIPOL_DB_USER:-tysescrutinymicrodivipol}
+      - SPRING_LIQUIBASE_PASSWORD=${DIVIPOL_DB_PASSWORD}
+      - SPRING_CLOUD_CONSUL_HOST=consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=kafka:9092
+      - JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET=${JWT_SECRET}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_TYSE_SCRUTINY=DEBUG
+    depends_on:
+      postgres-divipol:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8081/management/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  scrutiny:
+    image: ${REGISTRY:-ghcr.io}/${SCRUTINY_IMAGE:-manuelmottaherrera/tyse-scrutiny-micro-scrutiny}:${IMAGE_TAG:-develop}
+    container_name: tyse-scrutiny-dev
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod,api-docs
+      - JHIPSTER_SLEEP=30
+      - SPRING_R2DBC_URL=r2dbc:postgresql://postgres-scrutiny:5432/${SCRUTINY_DB_NAME:-tyseScrutinyMicroScrutiny}
+      - SPRING_R2DBC_USERNAME=${SCRUTINY_DB_USER:-tyseScrutinyMicroScrutiny}
+      - SPRING_R2DBC_PASSWORD=${SCRUTINY_DB_PASSWORD}
+      - SPRING_LIQUIBASE_URL=jdbc:postgresql://postgres-scrutiny:5432/${SCRUTINY_DB_NAME:-tyseScrutinyMicroScrutiny}
+      - SPRING_LIQUIBASE_USER=${SCRUTINY_DB_USER:-tyseScrutinyMicroScrutiny}
+      - SPRING_LIQUIBASE_PASSWORD=${SCRUTINY_DB_PASSWORD}
+      - SPRING_CLOUD_CONSUL_HOST=consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=kafka:9092
+      - JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET=${JWT_SECRET}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_TYSE_SCRUTINY=DEBUG
+    depends_on:
+      postgres-scrutiny:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8084/management/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  mock-pipeline:
+    image: ${REGISTRY:-ghcr.io}/${MOCK_IMAGE:-manuelmottaherrera/tyse-scrutiny-mock-pipeline}:${IMAGE_TAG:-develop}
+    container_name: tyse-mock-dev
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JHIPSTER_SLEEP=30
+      - SPRING_CLOUD_CONSUL_HOST=consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=kafka:9092
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_TYSE_SCRUTINY=DEBUG
+    depends_on:
+      consul:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+
+  notification:
+    image: ${REGISTRY:-ghcr.io}/${NOTIFICATION_IMAGE:-manuelmottaherrera/tyse-scrutiny-micro-notification}:${IMAGE_TAG:-develop}
+    container_name: tyse-notification-dev
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JHIPSTER_SLEEP=30
+      - SPRING_CLOUD_CONSUL_HOST=consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=kafka:9092
+      - SPRING_MAIL_HOST=mailhog
+      - SPRING_MAIL_PORT=1025
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_TYSE_SCRUTINY=DEBUG
+    depends_on:
+      consul:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mailhog:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+
+  # ===========================================================================
+  # REVERSE PROXY
+  # ===========================================================================
+
+  nginx:
+    image: nginx:alpine
+    container_name: tyse-nginx-dev
+    ports:
+      - '${NGINX_HTTP_PORT:-80}:80'
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - tyse-dev
+    restart: unless-stopped
+
+networks:
+  tyse-dev:
+    driver: bridge
+    name: tyse-dev-network
+
+volumes:
+  kafka_data:
+    name: tyse-kafka-dev
+  minio_data:
+    name: tyse-minio-dev
+  gateway_db:
+    name: tyse-gateway-db-dev
+  divipol_db:
+    name: tyse-divipol-db-dev
+  scrutiny_db:
+    name: tyse-scrutiny-db-dev

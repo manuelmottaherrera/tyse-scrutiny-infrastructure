@@ -1,0 +1,2 @@
+# Archivos con secretos - NUNCA commitear
+.env.dev
