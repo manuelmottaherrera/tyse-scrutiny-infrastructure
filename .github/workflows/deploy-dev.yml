@@ -1,0 +1,62 @@
+name: Deploy to Dev Server
+
+on:
+  # Manual trigger con opción de servicio específico
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Servicio a desplegar (all = todos)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - gateway
+          - divipol
+          - scrutiny
+          - mock-pipeline
+          - notification
+
+  # Trigger automático cuando se actualiza el compose o scripts
+  push:
+    branches: [develop]
+    paths:
+      - 'dev/**'
+
+jobs:
+  deploy:
+    name: Deploy Dev Environment
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SERVER_USER }}
+          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/tyse/tyse-scrutiny
+
+            # Pull últimos cambios del repo infrastructure
+            git pull origin develop
+
+            SERVICE="${{ github.event.inputs.service || 'all' }}"
+
+            if [ "$SERVICE" = "all" ]; then
+              ./dev/scripts/deploy-dev.sh
+            else
+              ./dev/scripts/deploy-dev.sh --service "$SERVICE"
+            fi
+
+      - name: Health Check
+        if: success()
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SERVER_USER }}
+          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/tyse/tyse-scrutiny
+            ./dev/scripts/health-check.sh
