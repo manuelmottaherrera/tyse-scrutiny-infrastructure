@@ -1,2 +1,9 @@
 # Archivos con secretos - NUNCA commitear
 .env.dev
+.env.sync
+
+# Dumps de sincronización
+sync-dumps/
+
+# Logs
+logs/
