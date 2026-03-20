@@ -1,0 +1,351 @@
+# Tyse Scrutiny - Entorno 100% Dockerizado para desarrollo local
+#
+# NO requiere instalar Java, Maven ni Node en el host.
+# Solo necesitas: Docker + git
+#
+# Uso:
+#   ./start.sh              # Todo
+#   ./start.sh gateway      # Solo gateway + dependencias
+#   ./stop.sh               # Parar todo
+#
+# Estructura esperada de directorios (hermanos):
+#   tyse-scrutiny-infrastructure/   (este repo)
+#   tyse-scrutiny-gateway/
+#   tyse-scrutiny-micro-divipol/
+#   tyse-scrutiny-micro-scrutiny/
+#   tyse-scrutiny-micro-notification/
+
+name: tyse-docker-dev
+
+services:
+  # ===========================================================================
+  # INFRAESTRUCTURA
+  # ===========================================================================
+
+  consul:
+    image: hashicorp/consul:1.21.0
+    container_name: tyse-ddev-consul
+    ports:
+      - '127.0.0.1:8500:8500'
+    command: consul agent -dev -ui -client 0.0.0.0 -log-level=INFO
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'consul', 'members']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  consul-config-loader:
+    image: jhipster/consul-config-loader:v0.4.1
+    container_name: tyse-ddev-consul-config
+    volumes:
+      - ../../tyse-scrutiny-infrastructure/consul/central-server-config:/config
+    environment:
+      - INIT_SLEEP_SECONDS=5
+      - CONSUL_URL=consul
+      - CONSUL_PORT=8500
+    depends_on:
+      consul: { condition: service_healthy }
+    networks: [tyse-docker-dev]
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: tyse-ddev-kafka
+    ports:
+      - '127.0.0.1:9092:9092'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server=localhost:9092']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  minio:
+    image: minio/minio:latest
+    container_name: tyse-ddev-minio
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    environment:
+      MINIO_ROOT_USER: tyseadmin
+      MINIO_ROOT_PASSWORD: tyseadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: tyse-ddev-minio-init
+    depends_on: [minio]
+    entrypoint: ['/bin/sh', '-c']
+    command: |
+      "
+      sleep 5
+      mc alias set tyse http://minio:9000 tyseadmin tyseadmin123
+      mc mb --ignore-existing tyse/e14-pdfs
+      mc mb --ignore-existing tyse/e14-processed
+      mc anonymous set download tyse/e14-pdfs
+      echo 'MinIO buckets ready.'
+      "
+    networks: [tyse-docker-dev]
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: tyse-ddev-mailhog
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8025']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # BASES DE DATOS
+  # ===========================================================================
+
+  postgres-gateway:
+    image: postgres:17.4
+    container_name: tyse-ddev-pg-gateway
+    environment:
+      POSTGRES_USER: tyseScrutinyGateway
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - gateway_db:/var/lib/postgresql/data
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tyseScrutinyGateway']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-divipol:
+    image: postgres:17.4
+    container_name: tyse-ddev-pg-divipol
+    environment:
+      POSTGRES_USER: tyseScrutinyMicroDivipol
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - divipol_db:/var/lib/postgresql/data
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tyseScrutinyMicroDivipol']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-scrutiny:
+    image: postgres:17.4
+    container_name: tyse-ddev-pg-scrutiny
+    environment:
+      POSTGRES_USER: tyseScrutinyMicroScrutiny
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - '127.0.0.1:5434:5432'
+    volumes:
+      - scrutiny_db:/var/lib/postgresql/data
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tyseScrutinyMicroScrutiny']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ===========================================================================
+  # MICROSERVICIOS (compilados desde source)
+  # ===========================================================================
+
+  gateway-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway-builder
+    container_name: tyse-ddev-gateway
+    working_dir: /app
+    volumes:
+      - ../../tyse-scrutiny-gateway:/app
+      - maven_repo:/root/.m2/repository
+      - npm_cache:/root/.npm
+      - gateway_node_modules:/app/node_modules
+      - gateway_target:/app/target
+    command: >
+      bash -c "
+        chmod +x mvnw &&
+        npm install &&
+        ./mvnw -ntp spring-boot:run -Dspring-boot.run.profiles=docker-dev
+      "
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      - SPRING_DOCKER_COMPOSE_ENABLED=false
+    depends_on:
+      postgres-gateway: { condition: service_healthy }
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      mailhog: { condition: service_healthy }
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+  gateway-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway-builder
+    container_name: tyse-ddev-gateway-frontend
+    working_dir: /app
+    volumes:
+      - ../../tyse-scrutiny-gateway:/app
+      - npm_cache:/root/.npm
+      - gateway_node_modules:/app/node_modules
+      - gateway_target:/app/target
+    command: >
+      bash -c "
+        npm install &&
+        npx webpack serve --config webpack/webpack.dev.js --port 9000 --host 0.0.0.0
+      "
+    ports:
+      - '127.0.0.1:9000:9000'
+    environment:
+      - BACKEND_URL=http://gateway-backend:8080
+    depends_on:
+      - gateway-backend
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+  divipol:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-builder
+    container_name: tyse-ddev-divipol
+    working_dir: /app
+    volumes:
+      - ../../tyse-scrutiny-micro-divipol:/app
+      - maven_repo:/root/.m2/repository
+      - divipol_target:/app/target
+    command: >
+      bash -c "
+        chmod +x mvnw &&
+        ./mvnw -ntp spring-boot:run -Dspring-boot.run.profiles=docker-dev
+      "
+    ports:
+      - '127.0.0.1:8081:8081'
+    environment:
+      - SPRING_DOCKER_COMPOSE_ENABLED=false
+    depends_on:
+      postgres-divipol: { condition: service_healthy }
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+  scrutiny:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-builder
+    container_name: tyse-ddev-scrutiny
+    working_dir: /app
+    volumes:
+      - ../../tyse-scrutiny-micro-scrutiny:/app
+      - maven_repo:/root/.m2/repository
+      - scrutiny_target:/app/target
+    command: >
+      bash -c "
+        chmod +x mvnw &&
+        ./mvnw -ntp spring-boot:run -Dspring-boot.run.profiles=docker-dev
+      "
+    ports:
+      - '127.0.0.1:8084:8084'
+    environment:
+      - SPRING_DOCKER_COMPOSE_ENABLED=false
+    depends_on:
+      postgres-scrutiny: { condition: service_healthy }
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+  notification:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-builder
+    container_name: tyse-ddev-notification
+    working_dir: /app
+    volumes:
+      - ../../tyse-scrutiny-micro-notification:/app
+      - maven_repo:/root/.m2/repository
+      - notification_target:/app/target
+    command: >
+      bash -c "
+        chmod +x mvnw &&
+        ./mvnw -ntp spring-boot:run -Dspring-boot.run.profiles=docker-dev
+      "
+    ports:
+      - '127.0.0.1:8085:8085'
+    environment:
+      - SPRING_DOCKER_COMPOSE_ENABLED=false
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      mailhog: { condition: service_healthy }
+    networks: [tyse-docker-dev]
+    restart: unless-stopped
+
+networks:
+  tyse-docker-dev:
+    driver: bridge
+    name: tyse-docker-dev-network
+
+volumes:
+  kafka_data:
+    name: tyse-ddev-kafka
+  minio_data:
+    name: tyse-ddev-minio
+  gateway_db:
+    name: tyse-ddev-pg-gateway
+  divipol_db:
+    name: tyse-ddev-pg-divipol
+  scrutiny_db:
+    name: tyse-ddev-pg-scrutiny
+  maven_repo:
+    name: tyse-ddev-maven-repo
+  npm_cache:
+    name: tyse-ddev-npm-cache
+  gateway_node_modules:
+    name: tyse-ddev-gateway-node-modules
+  gateway_target:
+    name: tyse-ddev-gateway-target
+  divipol_target:
+    name: tyse-ddev-divipol-target
+  scrutiny_target:
+    name: tyse-ddev-scrutiny-target
+  notification_target:
+    name: tyse-ddev-notification-target
