@@ -64,7 +64,7 @@ jobs:
           MINIO_UI_PORT=9001
           MAILHOG_SMTP_PORT=1035
           MAILHOG_UI_PORT=8035
-          NGINX_HTTP_PORT=80
+          NGINX_HTTP_PORT=8090
           GATEWAY_DB_PORT=5432
           DIVIPOL_DB_PORT=5433
           SCRUTINY_DB_PORT=5434
@@ -94,6 +94,9 @@ jobs:
           SERVICE="${{ github.event.inputs.service || 'all' }}"
 
           COMPOSE_CMD="docker compose -f docker-compose.dev.yml --env-file .env.dev"
+
+          # Bajar servicios que van a cambiar (evita conflictos de puertos)
+          $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
 
           # Pull imágenes actualizadas
           if [ "$SERVICE" = "all" ]; then
