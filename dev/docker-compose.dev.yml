@@ -348,7 +348,7 @@ services:
     image: nginx:alpine
     container_name: tyse-nginx-dev
     ports:
-      - '${NGINX_HTTP_PORT:-80}:80'
+      - '${NGINX_HTTP_PORT:-8090}:80'
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:

@@ -126,7 +126,7 @@ jobs:
 
           echo ""
           echo "--- Health Checks ---"
-          GATEWAY=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:80/management/health 2>/dev/null || echo "000")
+          GATEWAY=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8090/management/health 2>/dev/null || echo "000")
           CONSUL=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8510/v1/status/leader 2>/dev/null || echo "000")
 
           echo "Gateway (via nginx): $GATEWAY"
