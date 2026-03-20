@@ -2,16 +2,17 @@
 
 Infraestructura compartida para todos los microservicios del ecosistema Tyse Scrutiny.
 
-Este repositorio contiene **dos ambientes**:
+Este repositorio contiene **tres ambientes**:
 
 | Directorio | Propósito | Dónde se usa |
 |------------|-----------|--------------|
-| `/` (raíz) | Infraestructura para **desarrollo local** | Máquina de cada desarrollador |
+| `/` (raíz) | Infraestructura para **desarrollo local** (requiere Java/Node instalados) | Máquina de cada desarrollador |
+| `/docker-dev/` | **Desarrollo local 100% Dockerizado** (solo Docker + git) | Vibe coders, devs sin Java/Node |
 | `/dev/` | Ecosistema completo para **servidor de desarrollo** | Servidor 192.168.0.58 |
 
 ## Infraestructura Local (desarrollo individual)
 
-Levanta solo los servicios compartidos. Cada microservicio corre con `./mvnw` por separado.
+Levanta solo los servicios compartidos. Cada microservicio corre con `./mvnw` por separado. Requiere Java 17 y Maven instalados.
 
 ### Servicios
 
@@ -62,6 +63,24 @@ cd tyse-scrutiny-gateway && ./mvnw
 cd tyse-scrutiny-micro-divipol && ./mvnw
 cd tyse-scrutiny-micro-scrutiny && ./mvnw
 ```
+
+---
+
+## Desarrollo Local 100% Dockerizado (`/docker-dev/`)
+
+**No requiere instalar Java, Maven ni Node.** Solo Docker + git.
+
+Compila desde source dentro de contenedores con hot reload (Spring DevTools + Webpack HMR).
+
+```bash
+cd docker-dev
+./start.sh              # Todo el ecosistema (~10 min primera vez, ~1 min después)
+./start.sh gateway      # Solo gateway + dependencias
+./logs.sh gateway-backend
+./stop.sh
+```
+
+Ver instrucciones completas en [`docker-dev/README.md`](docker-dev/README.md).
 
 ---
 
