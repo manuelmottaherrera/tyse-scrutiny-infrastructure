@@ -35,7 +35,7 @@ services:
     image: jhipster/consul-config-loader:v0.4.1
     container_name: tyse-consul-config-dev
     volumes:
-      - ../consul/central-server-config:/config
+      - ./consul/central-server-config:/config
     environment:
       - INIT_SLEEP_SECONDS=5
       - CONSUL_URL=consul
@@ -139,7 +139,7 @@ services:
       POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
     volumes:
       - gateway_db:/var/lib/postgresql/data
-      - ../backup/gateway:/backup
+      - ./backup/gateway:/backup
     networks:
       - tyse-dev
     restart: unless-stopped
@@ -161,7 +161,7 @@ services:
       POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
     volumes:
       - divipol_db:/var/lib/postgresql/data
-      - ../backup/divipol:/backup
+      - ./backup/divipol:/backup
     networks:
       - tyse-dev
     restart: unless-stopped
@@ -183,7 +183,7 @@ services:
       POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C.UTF-8'
     volumes:
       - scrutiny_db:/var/lib/postgresql/data
-      - ../backup/scrutiny:/backup
+      - ./backup/scrutiny:/backup
     networks:
       - tyse-dev
     restart: unless-stopped

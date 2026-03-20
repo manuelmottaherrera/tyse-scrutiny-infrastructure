@@ -22,40 +22,118 @@ on:
     paths:
       - 'dev/**'
 
+env:
+  REGISTRY: ghcr.io
+  DEPLOY_DIR: /home/tyse/tyse-scrutiny
+
 jobs:
   deploy:
     name: Deploy Dev Environment
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: development
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEV_SERVER_HOST }}
-          username: ${{ secrets.DEV_SERVER_USER }}
-          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
-          script: |
-            cd /home/tyse/tyse-scrutiny
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            # Pull últimos cambios del repo infrastructure
-            git pull origin develop
+      - name: Setup deployment directory
+        run: |
+          mkdir -p ${{ env.DEPLOY_DIR }}/{backup,nginx/conf.d,scripts}
 
-            SERVICE="${{ github.event.inputs.service || 'all' }}"
+      - name: Copy deployment files
+        run: |
+          cp dev/docker-compose.dev.yml ${{ env.DEPLOY_DIR }}/
+          cp dev/nginx/conf.d/tyse-scrutiny.conf ${{ env.DEPLOY_DIR }}/nginx/conf.d/
+          cp dev/scripts/deploy-dev.sh ${{ env.DEPLOY_DIR }}/scripts/
+          cp dev/scripts/health-check.sh ${{ env.DEPLOY_DIR }}/scripts/
+          cp -r consul/ ${{ env.DEPLOY_DIR }}/
+          chmod +x ${{ env.DEPLOY_DIR }}/scripts/*.sh
 
-            if [ "$SERVICE" = "all" ]; then
-              ./dev/scripts/deploy-dev.sh
-            else
-              ./dev/scripts/deploy-dev.sh --service "$SERVICE"
-            fi
+      - name: Create .env.dev from secrets
+        run: |
+          cat > ${{ env.DEPLOY_DIR }}/.env.dev << EOF
+          REGISTRY=${{ env.REGISTRY }}
+          GATEWAY_IMAGE=manuelmottaherrera/tyse-scrutiny-gateway
+          DIVIPOL_IMAGE=manuelmottaherrera/tyse-scrutiny-micro-divipol
+          SCRUTINY_IMAGE=manuelmottaherrera/tyse-scrutiny-micro-scrutiny
+          NOTIFICATION_IMAGE=manuelmottaherrera/tyse-scrutiny-micro-notification
+          IMAGE_TAG=develop
+          CONSUL_PORT=8510
+          KAFKA_PORT=9102
+          MINIO_API_PORT=9000
+          MINIO_UI_PORT=9001
+          MAILHOG_SMTP_PORT=1035
+          MAILHOG_UI_PORT=8035
+          NGINX_HTTP_PORT=80
+          GATEWAY_DB_PORT=5432
+          DIVIPOL_DB_PORT=5433
+          SCRUTINY_DB_PORT=5434
+          GATEWAY_DB_NAME=tysescrutinygateway
+          GATEWAY_DB_USER=tysescrutinygateway
+          GATEWAY_DB_PASSWORD=${{ secrets.DEV_GATEWAY_DB_PASSWORD }}
+          DIVIPOL_DB_NAME=tysescrutinymicrodivipol
+          DIVIPOL_DB_USER=tysescrutinymicrodivipol
+          DIVIPOL_DB_PASSWORD=${{ secrets.DEV_DIVIPOL_DB_PASSWORD }}
+          SCRUTINY_DB_NAME=tyseScrutinyMicroScrutiny
+          SCRUTINY_DB_USER=tyseScrutinyMicroScrutiny
+          SCRUTINY_DB_PASSWORD=${{ secrets.DEV_SCRUTINY_DB_PASSWORD }}
+          JWT_SECRET=${{ secrets.DEV_JWT_SECRET }}
+          CORS_ALLOWED_ORIGINS=${{ secrets.DEV_CORS_ALLOWED_ORIGINS }}
+          GOOGLE_RECAPTCHA_SITE_KEY=${{ secrets.DEV_RECAPTCHA_SITE_KEY }}
+          GOOGLE_RECAPTCHA_SECRET_KEY=${{ secrets.DEV_RECAPTCHA_SECRET_KEY }}
+          MINIO_ROOT_USER=tyseadmin
+          MINIO_ROOT_PASSWORD=${{ secrets.DEV_MINIO_PASSWORD }}
+          EOF
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Deploy services
+        run: |
+          cd ${{ env.DEPLOY_DIR }}
+          SERVICE="${{ github.event.inputs.service || 'all' }}"
+
+          COMPOSE_CMD="docker compose -f docker-compose.dev.yml --env-file .env.dev"
+
+          # Pull imágenes actualizadas
+          if [ "$SERVICE" = "all" ]; then
+            $COMPOSE_CMD pull
+          else
+            $COMPOSE_CMD pull "$SERVICE"
+          fi
+
+          # Desplegar
+          if [ "$SERVICE" = "all" ]; then
+            $COMPOSE_CMD up -d consul kafka minio minio-init mailhog
+            sleep 10
+            $COMPOSE_CMD up -d postgres-gateway postgres-divipol postgres-scrutiny
+            sleep 10
+            $COMPOSE_CMD up -d gateway divipol scrutiny notification
+            sleep 5
+            $COMPOSE_CMD up -d nginx
+          else
+            $COMPOSE_CMD up -d "$SERVICE"
+          fi
 
       - name: Health Check
-        if: success()
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEV_SERVER_HOST }}
-          username: ${{ secrets.DEV_SERVER_USER }}
-          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
-          script: |
-            cd /home/tyse/tyse-scrutiny
-            ./dev/scripts/health-check.sh
+        run: |
+          echo "Esperando 60s para que los servicios arranquen..."
+          sleep 60
+
+          echo "--- Contenedores ---"
+          cd ${{ env.DEPLOY_DIR }}
+          docker compose -f docker-compose.dev.yml --env-file .env.dev ps
+
+          echo ""
+          echo "--- Health Checks ---"
+          GATEWAY=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:80/management/health 2>/dev/null || echo "000")
+          CONSUL=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8510/v1/status/leader 2>/dev/null || echo "000")
+
+          echo "Gateway (via nginx): $GATEWAY"
+          echo "Consul: $CONSUL"
+
+          if [ "$GATEWAY" = "200" ]; then
+            echo "✅ Deploy exitoso"
+          else
+            echo "⚠️ Gateway aún no responde (puede necesitar más tiempo)"
+          fi
