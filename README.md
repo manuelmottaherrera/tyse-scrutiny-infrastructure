@@ -84,7 +84,6 @@ Despliega **todo el ecosistema** en Docker: infraestructura + bases de datos + m
 | Gateway | (interno) | Expuesto via nginx :80 |
 | Divipol | (interno) | Accesible via gateway routing |
 | Scrutiny | (interno) | Accesible via gateway routing |
-| Mock Pipeline | (interno) | Generador de datos E14 |
 | Notification | (interno) | Envío de notificaciones |
 
 ### Setup inicial

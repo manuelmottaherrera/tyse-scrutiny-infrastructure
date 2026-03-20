@@ -10,7 +10,7 @@
 # Opciones:
 #   --pull-only    Solo descargar imágenes nuevas, sin reiniciar
 #   --restart      Reiniciar servicios sin pull
-#   --service X    Solo desplegar servicio X (gateway, divipol, scrutiny, mock-pipeline, notification)
+#   --service X    Solo desplegar servicio X (gateway, divipol, scrutiny, notification)
 ################################################################################
 
 set -e
@@ -95,7 +95,7 @@ else
     sleep 15
 
     log "Levantando microservicios..."
-    $COMPOSE_CMD up -d gateway divipol scrutiny mock-pipeline notification
+    $COMPOSE_CMD up -d gateway divipol scrutiny notification
     ok "Microservicios levantados"
 
     log "Levantando nginx..."

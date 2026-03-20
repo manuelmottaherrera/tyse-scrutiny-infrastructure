@@ -14,7 +14,6 @@ on:
           - gateway
           - divipol
           - scrutiny
-          - mock-pipeline
           - notification
 
   # Trigger automático cuando se actualiza el compose o scripts

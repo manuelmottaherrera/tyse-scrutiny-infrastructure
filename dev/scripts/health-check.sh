@@ -44,7 +44,7 @@ check_url() {
 
 echo ""
 echo "--- Contenedores ---"
-for svc in consul kafka minio mailhog postgres-gateway postgres-divipol postgres-scrutiny gateway divipol scrutiny mock-pipeline notification nginx; do
+for svc in consul kafka minio mailhog postgres-gateway postgres-divipol postgres-scrutiny gateway divipol scrutiny notification nginx; do
     check_container "$svc"
 done
 
