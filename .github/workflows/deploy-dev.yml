@@ -38,16 +38,13 @@ jobs:
 
       - name: Setup deployment directory
         run: |
-          mkdir -p ${{ env.DEPLOY_DIR }}/{backup,nginx/conf.d,scripts}
+          mkdir -p ${{ env.DEPLOY_DIR }}/{backup,nginx/conf.d}
 
       - name: Copy deployment files
         run: |
           cp dev/docker-compose.dev.yml ${{ env.DEPLOY_DIR }}/
           cp dev/nginx/conf.d/tyse-scrutiny.conf ${{ env.DEPLOY_DIR }}/nginx/conf.d/
-          cp dev/scripts/deploy-dev.sh ${{ env.DEPLOY_DIR }}/scripts/
-          cp dev/scripts/health-check.sh ${{ env.DEPLOY_DIR }}/scripts/
           cp -r consul/ ${{ env.DEPLOY_DIR }}/
-          chmod +x ${{ env.DEPLOY_DIR }}/scripts/*.sh
 
       - name: Create .env.dev from secrets
         run: |

@@ -92,7 +92,7 @@ Despliega **todo el ecosistema** en Docker: infraestructura + bases de datos + m
 
 | Servicio | Puerto Externo | Descripción |
 |----------|---------------|-------------|
-| **Nginx** | 80 | Reverse proxy → Gateway |
+| **Nginx** | 8090 | Reverse proxy → Gateway |
 | Consul | 8510 | Service discovery |
 | Kafka | 9102 | Message broker |
 | MinIO | 9000 / 9001 | Object storage |
@@ -100,57 +100,60 @@ Despliega **todo el ecosistema** en Docker: infraestructura + bases de datos + m
 | PostgreSQL Gateway | 5432 | BD del gateway |
 | PostgreSQL Divipol | 5433 | BD de divipol |
 | PostgreSQL Scrutiny | 5434 | BD de scrutiny |
-| Gateway | (interno) | Expuesto via nginx :80 |
+| Gateway | (interno) | Expuesto via nginx :8090 |
 | Divipol | (interno) | Accesible via gateway routing |
 | Scrutiny | (interno) | Accesible via gateway routing |
 | Notification | (interno) | Envío de notificaciones |
 
 ### Setup inicial
 
+El self-hosted runner de GitHub Actions debe estar configurado en el servidor. El `.env.dev` se genera automáticamente desde GitHub Secrets durante el deploy.
+
+Los secrets necesarios se configuran en GitHub → Settings → Secrets: `DEV_GATEWAY_DB_PASSWORD`, `DEV_DIVIPOL_DB_PASSWORD`, `DEV_SCRUTINY_DB_PASSWORD`, `DEV_JWT_SECRET`, `DEV_CORS_ALLOWED_ORIGINS`, `DEV_RECAPTCHA_SITE_KEY`, `DEV_RECAPTCHA_SECRET_KEY`, `DEV_MINIO_PASSWORD`.
+
+### Despliegue (CI/CD vía GitHub Actions)
+
+El despliegue se gestiona exclusivamente por GitHub Actions, garantizando que solo se despliega lo que está en la rama `develop`.
+
+**Triggers automáticos:**
+- Push a `develop` que modifique archivos en `dev/*`
+
+**Trigger manual:**
+- Desde GitHub Actions → `Deploy to Dev Server` → Run workflow
+- Permite seleccionar servicio específico: `all`, `gateway`, `divipol`, `scrutiny`, `notification`
+
+El workflow corre en un self-hosted runner, genera `.env.dev` desde GitHub Secrets, y ejecuta health checks post-deploy.
+
+### Operaciones en el servidor
+
 ```bash
-# 1. Clonar el repo en el servidor
-ssh web-tyse
-cd /home/tyse
-git clone git@github.com:manuelmottaherrera/tyse-scrutiny-infrastructure.git tyse-scrutiny
-
-# 2. Configurar variables de entorno
-cd tyse-scrutiny/dev
-cp .env.dev.example .env.dev
-nano .env.dev  # Completar passwords y JWT_SECRET
-
-# 3. Desplegar
-./scripts/deploy-dev.sh
-```
-
-### Despliegue y operaciones
-
-```bash
-# Desplegar todo (pull + restart)
-./dev/scripts/deploy-dev.sh
-
-# Solo descargar imágenes nuevas
-./dev/scripts/deploy-dev.sh --pull-only
-
-# Reiniciar sin pull
-./dev/scripts/deploy-dev.sh --restart
-
-# Desplegar un servicio específico
-./dev/scripts/deploy-dev.sh --service gateway
-
-# Verificar salud de servicios
-./dev/scripts/health-check.sh
-
 # Ver logs de un servicio
-docker compose -f dev/docker-compose.dev.yml --env-file dev/.env.dev logs -f gateway
+ssh web-tyse 'cd /home/tyse/tyse-scrutiny && docker compose -f docker-compose.dev.yml --env-file .env.dev logs -f gateway'
 
-# Detener todo
-docker compose -f dev/docker-compose.dev.yml --env-file dev/.env.dev down
+# Ver estado de los contenedores
+ssh web-tyse 'cd /home/tyse/tyse-scrutiny && docker compose -f docker-compose.dev.yml --env-file .env.dev ps'
+
+# Detener todo (usar solo si es necesario, el redeploy lo hace GHA)
+ssh web-tyse 'cd /home/tyse/tyse-scrutiny && docker compose -f docker-compose.dev.yml --env-file .env.dev down'
 ```
 
-### Despliegue remoto (desde tu máquina local)
+### Sincronización producción → desarrollo
+
+Descarga BDs de producción, sanitiza datos sensibles e importa en dev.
 
 ```bash
-ssh web-tyse 'cd /home/tyse/tyse-scrutiny && ./dev/scripts/deploy-dev.sh'
+# Configurar credenciales de producción
+cp dev/.env.sync.example dev/.env.sync
+nano dev/.env.sync
+
+# Sincronizar todas las BDs
+./dev/scripts/sync-prod-to-dev.sh
+
+# Solo una BD específica
+./dev/scripts/sync-prod-to-dev.sh --db gateway
+
+# Dry-run: solo exportar sin importar
+./dev/scripts/sync-prod-to-dev.sh --dry-run
 ```
 
 ### Perfil local-dev

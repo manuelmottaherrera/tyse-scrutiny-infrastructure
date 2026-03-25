@@ -40,13 +40,10 @@ cd docker-dev
 Hot reload via Spring DevTools + Webpack HMR. Shared Maven/npm cache volumes.
 
 ### 3. Dev Server (`/dev/`) — Full deployment to 192.168.0.58
-```bash
-./dev/scripts/deploy-dev.sh                   # Full deployment
-./dev/scripts/deploy-dev.sh --pull-only       # Update images only
-./dev/scripts/deploy-dev.sh --restart         # Restart without pull
-./dev/scripts/deploy-dev.sh --service gateway # Deploy single service
-./dev/scripts/health-check.sh                 # Verify service health
-```
+
+Deployment is managed exclusively via GitHub Actions (`Deploy to Dev Server` workflow).
+- **Automatic**: push to `develop` affecting `dev/*`
+- **Manual**: workflow dispatch with service selection (all, gateway, divipol, scrutiny, notification)
 
 ## CI/CD
 
