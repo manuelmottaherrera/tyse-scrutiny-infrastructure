@@ -22,6 +22,10 @@ on:
     paths:
       - 'dev/**'
 
+  # Trigger desde otros repos via repository_dispatch
+  repository_dispatch:
+    types: [deploy-dev]
+
 env:
   REGISTRY: ghcr.io
   DEPLOY_DIR: /home/tyse/tyse-scrutiny
@@ -88,22 +92,14 @@ jobs:
       - name: Deploy services
         run: |
           cd ${{ env.DEPLOY_DIR }}
-          SERVICE="${{ github.event.inputs.service || 'all' }}"
+          SERVICE="${{ github.event.inputs.service || github.event.client_payload.service || 'all' }}"
 
           COMPOSE_CMD="docker compose -f docker-compose.dev.yml --env-file .env.dev"
 
-          # Bajar servicios que van a cambiar (evita conflictos de puertos)
-          $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
-
-          # Pull imágenes actualizadas
           if [ "$SERVICE" = "all" ]; then
+            # Deploy completo: bajar todo, pull, levantar en orden
+            $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
             $COMPOSE_CMD pull
-          else
-            $COMPOSE_CMD pull "$SERVICE"
-          fi
-
-          # Desplegar
-          if [ "$SERVICE" = "all" ]; then
             $COMPOSE_CMD up -d consul kafka minio minio-init mailhog
             sleep 10
             $COMPOSE_CMD up -d postgres-gateway postgres-divipol postgres-scrutiny
@@ -112,7 +108,9 @@ jobs:
             sleep 5
             $COMPOSE_CMD up -d nginx
           else
-            $COMPOSE_CMD up -d "$SERVICE"
+            # Deploy individual: solo pull y recrear el servicio afectado
+            $COMPOSE_CMD pull "$SERVICE"
+            $COMPOSE_CMD up -d --no-deps "$SERVICE"
           fi
 
       - name: Health Check
